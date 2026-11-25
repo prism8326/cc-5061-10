@@ -143,6 +143,27 @@ class Handler(BaseHTTPRequestHandler):
                     eng.resize_to(target)
                 elif action == "/api/edit_seam":
                     eng.edit_seam(int(data["frame"]), int(data["row"]), int(data["col"]))
+                elif action == "/api/reconstruct":
+                    horizon = int(data.get("horizon", 0))
+                    strategy = data.get("strategy", "auto")
+                    rep = eng.reconstruct(horizon=horizon, strategy=strategy)
+                    return self._json({**self._state_payload(),
+                                       "reconstruction": rep.public(),
+                                       "boundary_check": eng.boundary_check()})
+                elif action == "/api/clear_reconstruct":
+                    horizon = int(data.get("horizon", 0))
+                    strategy = data.get("strategy", "auto")
+                    rep = eng.clear_and_reconstruct(horizon=horizon, strategy=strategy)
+                    return self._json({**self._state_payload(),
+                                       "reconstruction": rep.public(),
+                                       "boundary_check": eng.boundary_check()})
+                elif action == "/api/export":
+                    out = data.get("out") or None
+                    ex = eng.export(out_path=out)
+                    return self._json({**self._state_payload(), "export": ex.public()})
+                elif action == "/api/verify":
+                    return self._json({**self._state_payload(),
+                                       "boundary_check": eng.boundary_check()})
                 elif action == "/api/protect":
                     eng.set_protected_rect(
                         int(data["frame"]), int(data["x0"]), int(data["y0"]),
@@ -157,7 +178,12 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     return self._json({"ok": False, "status": f"unknown action {action}"}, 404)
                 return self._json(self._state_payload())
-        except Exception as e:
+        except (ValueError, KeyError) as e:
+            # User-input problems (bad frame, unknown scenario, missing field)
+            # are surfaced to the player as ok=false so it can render them
+            # instead of breaking the session, per the module contract.
+            self._json({"ok": False, "status": f"{type(e).__name__}: {e}"}, 200)
+        except Exception as e:  # genuine kernel failure
             self._json({"ok": False, "status": f"{type(e).__name__}: {e}"}, 500)
 
     # ------------------------------------------------------------- payloads
@@ -165,6 +191,19 @@ class Handler(BaseHTTPRequestHandler):
         eng = STATE.engine
         snap = eng.state_snapshot()
         last = eng.history[-1] if eng.history else {}
+        store = eng.store
+        store_info = None
+        if store is not None:
+            store_info = {
+                "format_version": store.manifest.get("format_version"),
+                "revision": store.revision,
+                "chunk_size": store.chunk_size,
+                "n_chunks": store.n_chunks,
+                "generation": store.manifest.get("generation"),
+                "created_from": store.manifest.get("created_from"),
+                "missing": store.verify(),
+            }
+        recon = eng.last_reconstruction.public() if eng.last_reconstruction else None
         return {
             "ok": True,
             "status": last.get("event", "ready"),
@@ -174,6 +213,8 @@ class Handler(BaseHTTPRequestHandler):
             "seams": eng.last_seams.tolist() if eng.last_seams is not None else None,
             "shot_cuts": eng.energy.shot_cuts.tolist(),
             "cost_per_frame": last.get("cost_per_frame", []),
+            "store": store_info,
+            "reconstruction": recon,
             **snap,
         }
 

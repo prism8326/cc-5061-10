@@ -30,6 +30,14 @@
   <button id="reset" class="warn">恢复原素材</button>
 </section>
 
+<section class="toolbar">
+  <label>重建时域 (horizon，0=整段) <input id="horizon" type="number" min="0" value="0" style="width:5em" /></label>
+  <button id="reconstruct">按分块存储重建接缝</button>
+  <button id="clearReconstruct">清空接缝并播放重建</button>
+  <button id="verify">校验重构片段与边界</button>
+  <button id="export">导出（标注须回读段）</button>
+</section>
+
 <section class="views">
   <figure>
     <figcaption>接缝路径视图（可在画面上拖拽红色接缝顶点）</figcaption>
@@ -70,6 +78,8 @@
   <div class="panel">
     <h2>内核状态与失败反馈</h2>
     <pre id="status">初始化中…</pre>
+    <h3>接缝数据转换 / 重建状态</h3>
+    <pre id="reconStatus">尚未重建</pre>
     <h3>保护区域（禁止穿越）</h3>
     <p class="hint">在接缝视图上拖拽一个矩形，松开即作为该帧硬约束重新求解。</p>
     <button id="clearProtect" class="warn">清除本帧保护区域</button>

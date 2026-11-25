@@ -51,8 +51,35 @@ function applyState(data) {
     `图割流量: ${Number(data.flow_value).toFixed(3)}，求解耗时: ${Number(data.elapsed).toFixed(3)}s\n` +
     `镜头切换帧间隙: ${JSON.stringify(data.shot_cuts)}\n求解器告警: ${warn}`,
     (data.warnings || []).length > 0);
+  renderReconStatus(data);
   renderFrames();
   drawContinuity(data);
+}
+
+function renderReconStatus(data) {
+  const el = $("reconStatus");
+  const st = data.store;
+  const rc = data.reconstruction;
+  if (!st) { el.textContent = "分块存储：未创建"; return; }
+  const missing = (st.missing || []);
+  let txt =
+    `分块存储 v${st.format_version}  revision=${st.revision}  ` +
+    `chunk=${st.chunk_size} × ${st.n_chunks} 块  origin=${st.created_from}\n` +
+    `完整性: ${missing.length ? "缺失/过期 " + missing.length + " 处" : "全部块与边界可读"}`;
+  if (rc) {
+    txt += `\n重建策略: ${rc.strategy}（horizon=${rc.horizon}）` +
+      `\n接缝闪烁指标: mean_step=${rc.flicker.mean_step.toFixed(2)}px ` +
+      `index=${rc.flicker.flicker_index.toFixed(4)} 最大=${rc.flicker.max_step.toFixed(1)}px` +
+      `\n可信帧: ${rc.verified_frames}/${data.frames}  须回读: ${rc.reread_frames.length} 帧`;
+    if (rc.reread_segments && rc.reread_segments.length) {
+      txt += `\n须回读段: ` + rc.reread_segments
+        .map((s) => `[${s.start},${s.stop})`).join(" ");
+    }
+  } else {
+    txt += "\n尚未重建（点“按分块存储重建接缝”以使用新路径）";
+  }
+  el.textContent = txt;
+  el.style.color = missing.length ? "var(--warn)" : "var(--ok)";
 }
 
 function setStatus(text, isWarn) {
@@ -227,6 +254,10 @@ $("editCanvas").addEventListener("mouseup", async () => {
 });
 
 // ------------------------------------------------------------- toolbar
+function readHorizon() {
+  const v = parseInt($("horizon").value, 10);
+  return Number.isFinite(v) && v >= 0 ? v : 0;   // 0 = full clip
+}
 $("load").addEventListener("click", () =>
   post("/api/load", { scenario: $("scenario").value }));
 $("solve").addEventListener("click", () => post("/api/solve"));
@@ -235,6 +266,42 @@ $("insert").addEventListener("click", () => post("/api/step", { kind: "insert" }
 $("resize").addEventListener("click", () =>
   post("/api/resize", { target_width: parseInt($("targetWidth").value, 10) }));
 $("reset").addEventListener("click", () => post("/api/reset"));
+$("reconstruct").addEventListener("click", () =>
+  post("/api/reconstruct", { horizon: readHorizon() }));
+$("clearReconstruct").addEventListener("click", async () => {
+  // Stop playback, empty the cached seam, rebuild from the store, then play
+  // the reconstruction so the displayed continuity comes from the new path.
+  if (state.playing) { state.playing = false; clearInterval(state.timer); $("play").textContent = "▶ 播放"; }
+  state.seams = null;
+  const data = await post("/api/clear_reconstruct", {
+    horizon: readHorizon() });
+  if (data.boundary_check && !data.boundary_check.ok) {
+    setStatus(`重建片段校验失败：${data.boundary_check.reason}`, true);
+  }
+  state.playing = true; $("play").textContent = "⏸ 暂停";
+  state.timer = setInterval(tick, 1000 / (parseInt($("fps").value, 10) || 10));
+});
+$("verify").addEventListener("click", async () => {
+  const data = await post("/api/verify");
+  const bc = data.boundary_check || {};
+  setStatus(
+    `重构片段校验: ${bc.ok ? "通过" : "失败（" + (bc.reason || "?") + "）"}\n` +
+    `帧数 ${bc.carved_frames}  宽度 ${bc.width}（期望 ${bc.expected_width}）\n` +
+    `边界连续性: ${bc.continuity_ok ? "通过" : "存在跳变"}  ` +
+    `最差相邻帧接缝位移 frame ${bc.worst_boundary_gap_frame}: ${Number(bc.worst_boundary_gap_px).toFixed(2)}px\n` +
+    `须回读帧: ${JSON.stringify(bc.reread_frames || [])}\nrevision=${bc.revision}`,
+    !bc.ok || !bc.continuity_ok);
+});
+$("export").addEventListener("click", async () => {
+  const data = await post("/api/export");
+  const ex = data.export || {};
+  const segs = (ex.segments || []).map((s) =>
+    `[${s.start},${s.stop}) ${s.kind === "reread" ? "须回读原片" : "已校验"}`).join("\n");
+  setStatus(
+    `导出使用 ${ex.applied_path}（rev ${ex.used_revision}）\n` +
+    `须回读帧: ${JSON.stringify(ex.must_reread)}\n分段:\n${segs || "无"}`,
+    (ex.must_reread || []).length > 0);
+});
 $("clearProtect").addEventListener("click", async () => {
   // reset clears engine including protected masks, then re-applies current size
   const target = state.meta.width;

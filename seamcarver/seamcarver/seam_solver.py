@@ -50,14 +50,18 @@ def _spatial_capacities(unary: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return cap_h, cap_v
 
 
-def _temporal_capacities(
-    unary: np.ndarray, flows: np.ndarray, shot_cuts: np.ndarray, cfg: SolveConfig
+def temporal_capacities(
+    unary: np.ndarray, gap_motion: np.ndarray, shot_cuts: np.ndarray,
+    cfg: SolveConfig,
 ) -> np.ndarray:
-    """Capacity of edges joining node (t,y,x) to (t+1,y,x).
+    """Capacity of edges joining node (t,y,x) to (t+1,y,x), from motion magnitude.
 
     High where the scene is static (seam should persist), low where the local
     motion magnitude or occlusion cost indicates the seam may need to jump,
-    and zero across a detected shot cut.
+    and zero across a detected shot cut.  ``gap_motion[t]`` is the forward
+    flow *magnitude* for the t -> t+1 gap; keeping it as an explicit input lets
+    the chunked store rebuild the exact same edges without re-running optical
+    flow.
     """
     T, H, W = unary.shape
     if T < 2:
@@ -66,14 +70,24 @@ def _temporal_capacities(
     for t in range(T - 1):
         if shot_cuts[t]:
             continue
-        mag = np.sqrt((flows[t] ** 2).sum(-1) + 1e-8)
-        loosen = np.exp(-(mag / cfg.temporal_motion_gate) ** 2)
+        loosen = np.exp(-(gap_motion[t] / cfg.temporal_motion_gate) ** 2)
         energy_scale = 0.5 * (unary[t] + unary[t + 1])
         cap[t] = np.minimum(
             cfg.temporal_max,
             cfg.temporal_base * loosen + 0.25 * energy_scale * loosen,
         )
     return cap.astype(np.float32)
+
+
+def _temporal_capacities(
+    unary: np.ndarray, flows: np.ndarray, shot_cuts: np.ndarray, cfg: SolveConfig
+) -> np.ndarray:
+    """Backward-compatible wrapper: derive per-gap magnitudes from dense flow."""
+    if flows.shape[0] == 0:
+        gap_motion = np.zeros((0,) + unary.shape[1:], np.float32)
+    else:
+        gap_motion = np.sqrt((flows ** 2).sum(-1) + 1e-8)
+    return temporal_capacities(unary, gap_motion, shot_cuts, cfg)
 
 
 def build_and_solve(

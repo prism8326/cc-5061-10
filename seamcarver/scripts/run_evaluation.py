@@ -26,6 +26,7 @@ from seamcarver.evaluate import (
     ScenarioReport, evaluate_scenario, track_red_marker, trajectory_jitter,
 )
 from seamcarver.flow import FlowConfig
+from seamcarver.reconstruct import compare_strategies
 from seamcarver.seam_solver import SolveConfig
 from seamcarver import synth
 from seamcarver.video_io import write_video, overlay_seams
@@ -58,6 +59,7 @@ def main() -> int:
 
     flow_cfg = FlowConfig(method=args.flow)
     reports: list[dict] = []
+    migration: dict[str, dict] = {}
     for name, factory in SCENARIOS.items():
         frames, truth = factory()
         write_video(os.path.join(args.out, f"{name}_original.mp4"), frames, fps=12)
@@ -87,8 +89,44 @@ def main() -> int:
         scaled = uniform_scale(frames, target)
         write_video(os.path.join(args.out, f"{name}_uniform_scale.mp4"), scaled, fps=12)
 
+        # Point the engine at the chunked store and produce migration evidence:
+        # reconstruction flicker, lazy-vs-import comparison, and the export
+        # re-read map.  This proves editing/export use the NEW path, not the
+        # legacy per-frame energy table.
+        store_dir = os.path.join(args.out, "stores", name)
+        eng.store_root = store_dir
+        eng.recompute_energy()
+        eng.solve()
+        recon = eng.reconstruct(horizon=0)   # full clip: truncate only at shot cuts
+        cmp = compare_strategies(eng.store, horizon=0)
+        export = eng.export()
+        migration[name] = {
+            "store": {
+                "format_version": eng.store.manifest["format_version"],
+                "revision": eng.store.revision,
+                "chunk_size": eng.store.chunk_size,
+                "n_chunks": eng.store.n_chunks,
+                "missing": eng.store.verify(),
+            },
+            "reconstruction": recon.public(),
+            "strategy_compare": {
+                "chosen": cmp["chosen"], "reason": cmp["reason"],
+                "lazy_flicker_index": cmp["lazy"]["flicker"]["flicker_index"],
+                "import_flicker_index": cmp["import_rebuild"]["flicker"]["flicker_index"],
+                "lazy_chunk_edge_discontinuity": cmp["lazy"]["discontinuity_at_chunk_edges"],
+                "import_chunk_edge_discontinuity": cmp["import_rebuild"]["discontinuity_at_chunk_edges"],
+            },
+            "export": export.public(),
+        }
+        print(f"[{name}] store rev={eng.store.revision} "
+              f"recon_flicker={recon.flicker['flicker_index']:.4f} "
+              f"strategy={cmp['chosen']} "
+              f"reread={len(export.must_reread)}")
+
     with open(os.path.join(args.out, "report.json"), "w") as f:
         json.dump(reports, f, indent=2)
+    with open(os.path.join(args.out, "migration.json"), "w") as f:
+        json.dump(migration, f, indent=2)
 
     lines = ["scenario\tratio\tobj_width\tjitter\tswitches\tshot_cuts\t"
              "solve_s\ttotal_s\tscale_baseline\tacceptable"]
