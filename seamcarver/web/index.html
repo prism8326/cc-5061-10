@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>时空接缝重构播放器</title>
+<link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+<header>
+  <h1>内容感知视频尺寸重构 · 时空接缝播放器</h1>
+  <div class="sub">所有控件均由接缝重构内核 (Dinic 3D 图割) 驱动；求解失败会回显到下方状态区。</div>
+</header>
+
+<section class="toolbar">
+  <label>场景
+    <select id="scenario">
+      <option value="moving_marker">移动几何标记</option>
+      <option value="fast_occlusion">快速运动 + 遮挡</option>
+      <option value="shot_cut">镜头切换</option>
+    </select>
+  </label>
+  <button id="load">载入场景</button>
+  <button id="solve">重新求解接缝</button>
+  <span class="sep"></span>
+  <label>目标宽度 <input id="targetWidth" type="number" min="8" style="width:5em" /></label>
+  <button id="resize">重构到目标宽度</button>
+  <button id="remove">删除一条接缝 −1</button>
+  <button id="insert">插入一条接缝 +1</button>
+  <button id="reset" class="warn">恢复原素材</button>
+</section>
+
+<section class="views">
+  <figure>
+    <figcaption>接缝路径视图（可在画面上拖拽红色接缝顶点）</figcaption>
+    <div class="canvas-wrap">
+      <img id="seamView" alt="seam overlay" />
+      <canvas id="editCanvas"></canvas>
+    </div>
+  </figure>
+  <figure>
+    <figcaption>实际重构视频（当前几何，逐帧真实输出）</figcaption>
+    <div class="canvas-wrap">
+      <img id="carvedView" alt="carved frame" />
+    </div>
+  </figure>
+</section>
+
+<section class="player">
+  <button id="play">▶ 播放</button>
+  <input id="scrub" type="range" min="0" value="0" step="1" />
+  <span id="frameLabel">frame 0</span>
+  <label>视图
+    <select id="viewMode">
+      <option value="seam">接缝叠加</option>
+      <option value="carved">重构结果</option>
+      <option value="original">原始帧</option>
+      <option value="energy">能量体</option>
+    </select>
+  </label>
+  <label>播放速度 <input id="fps" type="range" min="2" max="24" value="10" /></label>
+</section>
+
+<section class="panels">
+  <div class="panel">
+    <h2>边界连续性</h2>
+    <canvas id="continuity" width="520" height="180"></canvas>
+    <p class="hint">蓝线：相邻帧接缝列差（越大表示接缝在该帧发生侧跳）；红色竖线：检测到的镜头切换，时间边在此处断开。</p>
+  </div>
+  <div class="panel">
+    <h2>内核状态与失败反馈</h2>
+    <pre id="status">初始化中…</pre>
+    <h3>保护区域（禁止穿越）</h3>
+    <p class="hint">在接缝视图上拖拽一个矩形，松开即作为该帧硬约束重新求解。</p>
+    <button id="clearProtect" class="warn">清除本帧保护区域</button>
+  </div>
+</section>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
